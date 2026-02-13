@@ -9,6 +9,7 @@ import * as crypto from 'crypto';
 import { SupabaseService } from '../database/supabase.service';
 import { StorageService } from '../storage/storage.service';
 import { CloudinaryService } from '../cloudinary/cloudinary.service';
+import { VideoCompressionService } from '../video-compression/video-compression.service';
 import { CreateVideoPostDto } from './dto/create-video-post.dto';
 import { UpdateVideoPostDto } from './dto/update-video-post.dto';
 import { extractStoragePath } from '../common/utils/storage-path';
@@ -30,6 +31,7 @@ export class VideoPostsService {
     private readonly supabase: SupabaseService,
     private readonly storage: StorageService,
     private readonly cloudinary: CloudinaryService,
+    private readonly videoCompression: VideoCompressionService,
   ) {}
 
   /**
@@ -273,15 +275,20 @@ export class VideoPostsService {
       if (!file || !file.buffer) continue;
 
       const videoPostId = crypto.randomUUID();
-      const ext = file.originalname.split('.').pop() || 'mp4';
-      const storagePath = `${videoPostId}.${ext}`;
+
+      // Compress video before upload
+      const compressed = await this.videoCompression.compressVideo(
+        file.buffer,
+        file.originalname,
+      );
+      const storagePath = `${videoPostId}.mp4`;
 
       // Upload video to "videos" bucket
       const uploadedPath = await this.storage.uploadFile(
         'videos',
         storagePath,
-        file.buffer,
-        file.mimetype,
+        compressed.buffer,
+        compressed.mimetype,
       );
 
       if (!uploadedPath) {
@@ -459,15 +466,18 @@ export class VideoPostsService {
         await this.storage.deleteFiles('images', [oldThumbPath]);
       }
 
-      // Upload new video
-      const ext = videoFile.originalname.split('.').pop() || 'mp4';
-      const storagePath = `${videoPostId}.${ext}`;
+      // Compress and upload new video
+      const compressed = await this.videoCompression.compressVideo(
+        videoFile.buffer,
+        videoFile.originalname,
+      );
+      const storagePath = `${videoPostId}.mp4`;
 
       const uploadedPath = await this.storage.uploadFile(
         'videos',
         storagePath,
-        videoFile.buffer,
-        videoFile.mimetype,
+        compressed.buffer,
+        compressed.mimetype,
       );
 
       if (uploadedPath) {

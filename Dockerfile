@@ -8,6 +8,7 @@ RUN npm run build
 
 # Production stage
 FROM node:20-alpine
+RUN apk add --no-cache ffmpeg
 WORKDIR /app
 COPY package*.json ./
 RUN npm ci --omit=dev
