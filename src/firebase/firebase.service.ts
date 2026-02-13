@@ -63,7 +63,7 @@ export class FirebaseService implements OnModuleInit {
 
     const { data: tokenRows, error } = await this.supabase.client
       .from('device_tokens')
-      .select('token')
+      .select('fcm_token')
       .eq('user_id', userId);
 
     if (error) {
@@ -78,7 +78,7 @@ export class FirebaseService implements OnModuleInit {
       return;
     }
 
-    const tokens = tokenRows.map((row) => row.token as string);
+    const tokens = tokenRows.map((row) => row.fcm_token as string);
 
     const message: admin.messaging.MulticastMessage = {
       tokens,
@@ -117,7 +117,7 @@ export class FirebaseService implements OnModuleInit {
           const { error: deleteError } = await this.supabase.client
             .from('device_tokens')
             .delete()
-            .in('token', invalidTokens);
+            .in('fcm_token', invalidTokens);
 
           if (deleteError) {
             this.logger.error(
