@@ -1,19 +1,27 @@
-import { Body, Controller, HttpCode, HttpStatus, Post } from '@nestjs/common';
-import { ApiOperation, ApiTags } from '@nestjs/swagger';
-import { Public } from '../common/decorators/public.decorator';
+import {
+  Body,
+  Controller,
+  HttpCode,
+  HttpStatus,
+  Post,
+  Req,
+} from '@nestjs/common';
+import { ApiOperation, ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { Request } from 'express';
 import { InteractionsService } from './interactions.service';
 import { ToggleInteractionDto } from './dto/toggle-interaction.dto';
 
 @ApiTags('Interactions')
+@ApiBearerAuth()
 @Controller('interactions')
 export class InteractionsController {
   constructor(private readonly interactionsService: InteractionsService) {}
 
   @Post('toggle')
   @HttpCode(HttpStatus.OK)
-  @Public()
   @ApiOperation({ summary: 'Toggle a follow, like, or bookmark interaction' })
-  async toggle(@Body() dto: ToggleInteractionDto) {
-    return this.interactionsService.toggle(dto);
+  async toggle(@Req() req: Request, @Body() dto: ToggleInteractionDto) {
+    const userId = (req as any).user.id;
+    return this.interactionsService.toggle(userId, dto);
   }
 }
