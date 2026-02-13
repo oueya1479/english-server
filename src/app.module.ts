@@ -18,6 +18,7 @@ import { ChatModule } from './chat/chat.module';
 import { FeedsModule } from './feeds/feeds.module';
 import { ChatRoomsModule } from './chat-rooms/chat-rooms.module';
 import { CountersModule } from './counters/counters.module';
+import { TeacherVotesModule } from './teacher-votes/teacher-votes.module';
 import { HealthController } from './health.controller';
 
 @Module({
@@ -31,11 +32,18 @@ import { HealthController } from './health.controller';
     RedisModule,
     BullModule.forRootAsync({
       inject: [ConfigService],
-      useFactory: (config: ConfigService) => ({
-        connection: {
-          url: config.get('REDIS_URL', 'redis://localhost:6379'),
-        },
-      }),
+      useFactory: (config: ConfigService) => {
+        const redisUrl = config.get('REDIS_URL', 'redis://localhost:6379');
+        const url = new URL(redisUrl);
+        return {
+          connection: {
+            host: url.hostname,
+            port: parseInt(url.port) || 6379,
+            password: url.password || undefined,
+            maxRetriesPerRequest: null,
+          },
+        };
+      },
     }),
     // Service modules
     StorageModule,
@@ -51,6 +59,7 @@ import { HealthController } from './health.controller';
     FeedsModule,
     ChatRoomsModule,
     CountersModule,
+    TeacherVotesModule,
   ],
   controllers: [HealthController],
   providers: [
