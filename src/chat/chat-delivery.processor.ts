@@ -1,6 +1,6 @@
-import { Processor, WorkerHost } from '@nestjs/bullmq';
-import { Logger } from '@nestjs/common';
-import { Job } from 'bullmq';
+import { Processor, WorkerHost, InjectQueue } from '@nestjs/bullmq';
+import { Logger, OnModuleInit } from '@nestjs/common';
+import { Job, Queue } from 'bullmq';
 import { SupabaseService } from '../database/supabase.service';
 import { ChatGateway } from './chat.gateway';
 import { FirebaseService } from '../firebase/firebase.service';
@@ -23,7 +23,7 @@ export interface ChatDeliveryJobData {
 }
 
 @Processor('chat-delivery')
-export class ChatDeliveryProcessor extends WorkerHost {
+export class ChatDeliveryProcessor extends WorkerHost implements OnModuleInit {
   private readonly logger = new Logger(ChatDeliveryProcessor.name);
 
   constructor(
@@ -31,11 +31,31 @@ export class ChatDeliveryProcessor extends WorkerHost {
     private readonly chatGateway: ChatGateway,
     private readonly firebaseService: FirebaseService,
     private readonly redisService: RedisService,
+    @InjectQueue('chat-delivery') private readonly queue: Queue,
   ) {
     super();
   }
 
+  async onModuleInit() {
+    // Clean up stale failed/delayed jobs from previous runs
+    const failed = await this.queue.getFailed();
+    const delayed = await this.queue.getDelayed();
+    if (failed.length > 0) {
+      await Promise.all(failed.map((j) => j.remove()));
+      this.logger.log(`Cleaned ${failed.length} failed jobs`);
+    }
+    if (delayed.length > 0) {
+      await Promise.all(delayed.map((j) => j.remove()));
+      this.logger.log(`Cleaned ${delayed.length} stale delayed jobs`);
+    }
+    this.logger.log('ChatDeliveryProcessor initialized');
+  }
+
   async process(job: Job<ChatDeliveryJobData>): Promise<void> {
+    this.logger.log(
+      `[Processor] Processing job ${job.id} (name: ${job.name}, delay: ${job.delay})`,
+    );
+
     const {
       chatRoomId,
       userId,

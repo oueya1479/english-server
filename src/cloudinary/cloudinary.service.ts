@@ -1,6 +1,6 @@
-import { Injectable, Logger } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
-import { StorageService } from '../storage/storage.service';
+import { Injectable, Logger } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
+import { StorageService } from "../storage/storage.service";
 
 @Injectable()
 export class CloudinaryService {
@@ -11,11 +11,11 @@ export class CloudinaryService {
     private readonly configService: ConfigService,
     private readonly storageService: StorageService,
   ) {
-    this.cloudName = this.configService.get<string>('CLOUDINARY_CLOUD_NAME');
+    this.cloudName = this.configService.get<string>("CLOUDINARY_CLOUD_NAME");
 
     if (!this.cloudName) {
       this.logger.warn(
-        'CLOUDINARY_CLOUD_NAME not set, thumbnail generation will be unavailable',
+        "CLOUDINARY_CLOUD_NAME not set, thumbnail generation will be unavailable",
       );
     }
   }
@@ -35,16 +35,17 @@ export class CloudinaryService {
   ): Promise<string | null> {
     if (!this.cloudName) {
       this.logger.warn(
-        'Skipping thumbnail generation: CLOUDINARY_CLOUD_NAME not configured',
+        "Skipping thumbnail generation: CLOUDINARY_CLOUD_NAME not configured",
       );
       return null;
     }
 
     try {
       const encodedVideoUrl = encodeURIComponent(videoUrl);
-      const thumbnailUrl =
-        `https://res.cloudinary.com/${this.cloudName}/video/fetch/so_0,w_720,h_1280,c_fill,f_jpg,q_80/${encodedVideoUrl}`;
+      const thumbnailUrl = `https://res.cloudinary.com/${this.cloudName}/video/fetch/so_0,w_720,h_1280,c_fill,f_jpg,q_80/${encodedVideoUrl}`;
 
+      this.logger.debug(`Fetching thumbnail from: ${thumbnailUrl}`);
+      this.logger.debug(`Original video URL: ${videoUrl}`);
       const response = await fetch(thumbnailUrl);
 
       if (!response.ok) {
@@ -59,10 +60,10 @@ export class CloudinaryService {
 
       const storagePath = `thumbnails/${videoPostId}.jpg`;
       const uploadedPath = await this.storageService.uploadFile(
-        'images',
+        "images",
         storagePath,
         buffer,
-        'image/jpeg',
+        "image/jpeg",
       );
 
       if (!uploadedPath) {
@@ -72,7 +73,7 @@ export class CloudinaryService {
         return null;
       }
 
-      const publicUrl = this.storageService.getPublicUrl('images', storagePath);
+      const publicUrl = this.storageService.getPublicUrl("images", storagePath);
       this.logger.log(`Thumbnail generated for video post ${videoPostId}`);
 
       return publicUrl;

@@ -19,6 +19,7 @@ import { FeedsModule } from './feeds/feeds.module';
 import { ChatRoomsModule } from './chat-rooms/chat-rooms.module';
 import { CountersModule } from './counters/counters.module';
 import { TeacherVotesModule } from './teacher-votes/teacher-votes.module';
+import { EnglishPhrasesModule } from './english-phrases/english-phrases.module';
 import { HealthController } from './health.controller';
 
 @Module({
@@ -39,6 +40,7 @@ import { HealthController } from './health.controller';
           connection: {
             host: url.hostname,
             port: parseInt(url.port) || 6379,
+            username: url.username || undefined,
             password: url.password || undefined,
             maxRetriesPerRequest: null,
           },
@@ -60,6 +62,7 @@ import { HealthController } from './health.controller';
     ChatRoomsModule,
     CountersModule,
     TeacherVotesModule,
+    EnglishPhrasesModule,
   ],
   controllers: [HealthController],
   providers: [

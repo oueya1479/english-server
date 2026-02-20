@@ -10,6 +10,7 @@ import { StorageService } from '../storage/storage.service';
 import { extractStoragePath } from '../common/utils/storage-path';
 import { CreateTeacherDto } from './dto/create-teacher.dto';
 import { DeleteTeacherDto } from './dto/delete-teacher.dto';
+import { UpdateTeacherDto } from './dto/update-teacher.dto';
 
 @Injectable()
 export class TeachersService {
@@ -42,6 +43,115 @@ export class TeachersService {
   }
 
   /**
+   * List all teachers.
+   */
+  async findAll() {
+    const { data, error } = await this.supabase.client
+      .from('teachers')
+      .select('*')
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      this.logger.error(`Failed to fetch teachers: ${error.message}`);
+      throw new InternalServerErrorException('Failed to fetch teachers');
+    }
+
+    return data;
+  }
+
+  /**
+   * Get a single teacher by ID.
+   */
+  async findOne(id: string) {
+    const { data, error } = await this.supabase.client
+      .from('teachers')
+      .select('*')
+      .eq('id', id)
+      .single();
+
+    if (error || !data) {
+      throw new NotFoundException(`Teacher ${id} not found`);
+    }
+
+    return data;
+  }
+
+  /**
+   * Update a teacher with optional profile image replacement.
+   */
+  async updateTeacher(
+    id: string,
+    dto: UpdateTeacherDto,
+    profileImage?: Express.Multer.File,
+  ) {
+    // Verify teacher exists
+    const { data: existing, error: fetchError } = await this.supabase.client
+      .from('teachers')
+      .select('*')
+      .eq('id', id)
+      .single();
+
+    if (fetchError || !existing) {
+      throw new NotFoundException(`Teacher ${id} not found`);
+    }
+
+    const updates: Record<string, unknown> = {};
+
+    if (dto.name !== undefined) updates.name = dto.name;
+    if (dto.bio !== undefined) updates.bio = dto.bio;
+    if (dto.specialization !== undefined) {
+      updates.specialization = this.parseSpecialization(dto.specialization);
+    }
+
+    // Handle profile image replacement
+    if (profileImage) {
+      const ext = profileImage.originalname.split('.').pop() || 'jpg';
+      const storagePath = `teachers/${id}.${ext}`;
+
+      // Upload new image first (before deleting old one)
+      const uploadedPath = await this.storage.uploadFile(
+        'images',
+        storagePath,
+        profileImage.buffer,
+        profileImage.mimetype,
+      );
+
+      if (!uploadedPath) {
+        throw new InternalServerErrorException(
+          'Failed to upload profile image',
+        );
+      }
+
+      // Delete old image only after successful upload (skip if same path)
+      const oldPath = extractStoragePath(existing.profile_image_url, 'images');
+      if (oldPath && oldPath !== uploadedPath) {
+        await this.storage.deleteFiles('images', [oldPath]);
+      }
+
+      const publicUrl = this.storage.getPublicUrl('images', uploadedPath);
+      updates.profile_image_url = `${publicUrl}?v=${Date.now()}`;
+    }
+
+    if (Object.keys(updates).length === 0) {
+      return existing;
+    }
+
+    const { data, error } = await this.supabase.client
+      .from('teachers')
+      .update(updates)
+      .eq('id', id)
+      .select()
+      .single();
+
+    if (error) {
+      this.logger.error(`Failed to update teacher: ${error.message}`);
+      throw new InternalServerErrorException('Failed to update teacher');
+    }
+
+    return data;
+  }
+
+  /**
    * Create a new teacher with an optional profile image.
    */
   async createTeacher(
@@ -63,13 +173,14 @@ export class TeachersService {
         profileImage.mimetype,
       );
 
-      if (uploadedPath) {
-        profileImageUrl = this.storage.getPublicUrl('images', uploadedPath);
-      } else {
-        this.logger.warn(
-          `Failed to upload profile image for teacher ${teacherId}`,
+      if (!uploadedPath) {
+        throw new InternalServerErrorException(
+          'Failed to upload profile image',
         );
       }
+
+      const publicUrl = this.storage.getPublicUrl('images', uploadedPath);
+      profileImageUrl = `${publicUrl}?v=${Date.now()}`;
     }
 
     const specialization = this.parseSpecialization(dto.specialization);

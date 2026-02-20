@@ -4,16 +4,22 @@ import {
   Injectable,
   UnauthorizedException,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { Reflector } from '@nestjs/core';
 import { IS_PUBLIC_KEY } from '../decorators/public.decorator';
 import { SupabaseService } from '../../database/supabase.service';
 
 @Injectable()
 export class SupabaseAuthGuard implements CanActivate {
+  private readonly adminApiKey?: string;
+
   constructor(
     private reflector: Reflector,
     private supabaseService: SupabaseService,
-  ) {}
+    private configService: ConfigService,
+  ) {
+    this.adminApiKey = this.configService.get<string>('ADMIN_API_KEY');
+  }
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const isPublic = this.reflector.getAllAndOverride<boolean>(IS_PUBLIC_KEY, [
@@ -30,6 +36,12 @@ export class SupabaseAuthGuard implements CanActivate {
     }
 
     const token = authHeader.substring(7);
+
+    // Admin API key bypass — skip Supabase user verification
+    if (this.adminApiKey && token === this.adminApiKey) {
+      request.user = { id: 'admin', email: 'admin', role: 'admin' };
+      return true;
+    }
 
     const { data, error } = await this.supabaseService.client.auth.getUser(token);
     if (error || !data.user) {

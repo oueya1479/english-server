@@ -9,8 +9,8 @@ import { SentimentService, RelationshipState } from "./sentiment.service";
 import { RelationshipService } from "./relationship.service";
 import { MemoryService } from "./memory.service";
 import { ChatGateway } from "./chat.gateway";
+import { FirebaseService } from "../firebase/firebase.service";
 import { SendMessageDto } from "./dto/send-message.dto";
-import { ChatDeliveryJobData } from "./chat-delivery.processor";
 
 interface Teacher {
   id: string;
@@ -74,6 +74,7 @@ export class ChatService {
     private readonly relationshipService: RelationshipService,
     private readonly memoryService: MemoryService,
     private readonly chatGateway: ChatGateway,
+    private readonly firebaseService: FirebaseService,
     @InjectQueue("chat-delivery") private readonly chatDeliveryQueue: Queue,
   ) {}
 
@@ -348,7 +349,7 @@ export class ChatService {
     if (aiMessages.length === 0) aiMessages = ["흠..."];
     if (aiMessages.length > 5) aiMessages = aiMessages.slice(0, 5);
 
-    // 11. Schedule BullMQ delayed jobs for AI message delivery
+    // 11. Schedule delayed message delivery via setTimeout
     const initialDelay = 1500; // AI "thinking" time in ms
     let cumulativeDelay = initialDelay;
 
@@ -380,33 +381,39 @@ export class ChatService {
     for (let i = 0; i < aiMessages.length; i++) {
       const msg = aiMessages[i];
       const typingDuration = this.calculateTypingDuration(msg);
-
-      const jobData: ChatDeliveryJobData = {
-        chatRoomId,
-        userId,
-        teacherName,
-        teacherId: teacher.id,
-        teacherProfileImageUrl,
-        message: {
-          chat_room_id: chatRoomId,
-          sender_type: "teacher",
-          sender_id: teacher.id,
-          content: msg,
-        },
-        isFirst: i === 0,
-        isLast: i === aiMessages.length - 1,
-      };
+      const isFirst = i === 0;
+      const isLast = i === aiMessages.length - 1;
 
       // Add inter-message gap (after first message)
       if (i > 0) {
         cumulativeDelay += interMessageGap;
       }
-
       cumulativeDelay += typingDuration;
 
-      await this.chatDeliveryQueue.add("deliver-message", jobData, {
-        delay: cumulativeDelay,
-      });
+      const delay = cumulativeDelay;
+      setTimeout(() => {
+        this.deliverMessage({
+          chatRoomId,
+          userId,
+          teacherName,
+          teacherId: teacher.id,
+          teacherProfileImageUrl,
+          message: {
+            chat_room_id: chatRoomId,
+            sender_type: "teacher" as const,
+            sender_id: teacher.id,
+            content: msg,
+          },
+          isFirst,
+          isLast,
+        }).catch((err) =>
+          this.logger.error(`Delivery failed: ${err.message}`),
+        );
+      }, delay);
+
+      this.logger.log(
+        `[Delivery] Scheduled: delay=${delay}ms, msg="${msg.substring(0, 30)}"`,
+      );
     }
 
     // Update total_messages (user messages + AI messages to be delivered)
@@ -528,6 +535,112 @@ export class ChatService {
         }
       }
     }
+  }
+
+  private async deliverMessage(data: {
+    chatRoomId: string;
+    userId: string;
+    teacherName: string;
+    teacherId: string;
+    teacherProfileImageUrl: string;
+    message: {
+      chat_room_id: string;
+      sender_type: "teacher";
+      sender_id: string;
+      content: string;
+    };
+    isFirst: boolean;
+    isLast: boolean;
+  }): Promise<void> {
+    const {
+      chatRoomId,
+      userId,
+      teacherName,
+      teacherId,
+      teacherProfileImageUrl,
+      message,
+      isFirst,
+      isLast,
+    } = data;
+
+    // Check if user is currently viewing this chat room
+    const userInRoom = await this.chatGateway.isUserInRoom(userId, chatRoomId);
+
+    // 1. Insert message into chat_messages
+    const { data: savedMessage, error: insertError } =
+      await this.supabase.client
+        .from("chat_messages")
+        .insert({
+          chat_room_id: message.chat_room_id,
+          sender_type: message.sender_type,
+          sender_id: message.sender_id,
+          content: message.content,
+          is_read: userInRoom,
+        })
+        .select()
+        .single();
+
+    if (insertError) {
+      this.logger.error(`Failed to insert message: ${insertError.message}`);
+      throw insertError;
+    }
+
+    // 2. Update chat_rooms
+    if (userInRoom) {
+      await this.supabase.client
+        .from("chat_rooms")
+        .update({
+          last_message_at: new Date().toISOString(),
+          user_unread_count: 0,
+        })
+        .eq("id", chatRoomId);
+    } else {
+      await this.supabase.client
+        .from("chat_rooms")
+        .update({ last_message_at: new Date().toISOString() })
+        .eq("id", chatRoomId);
+    }
+
+    // 3. Emit new_message via Socket.IO
+    this.chatGateway.emitNewMessage(chatRoomId, savedMessage);
+
+    // 4. If last message: emit typing_stop + delete Redis typing state
+    if (isLast) {
+      this.chatGateway.emitTypingStop(chatRoomId);
+      await this.redis.client.del(`typing:${chatRoomId}`);
+    }
+
+    // 5. FCM push only for first message + user NOT in room
+    if (isFirst && !userInRoom) {
+      try {
+        await this.firebaseService.sendPushNotification(
+          userId,
+          teacherName,
+          message.content.length > 100
+            ? message.content.substring(0, 97) + "..."
+            : message.content,
+          {
+            chat_room_id: chatRoomId,
+            teacher_id: teacherId,
+            teacher_image_url: teacherProfileImageUrl,
+          },
+        );
+      } catch (fcmError) {
+        this.logger.warn(`FCM push failed: ${fcmError.message}`);
+      }
+    }
+
+    // 6. Emit chat_room_updated to user's personal channel
+    this.chatGateway.emitToUser(userId, "chat_room_updated", {
+      chatRoomId,
+      teacherName,
+      teacherProfileImageUrl,
+      lastMessageContent: message.content,
+    });
+
+    this.logger.log(
+      `Delivered message for room ${chatRoomId} (first: ${isFirst}, last: ${isLast}, userInRoom: ${userInRoom})`,
+    );
   }
 
   private calculateTypingDuration(content: string): number {

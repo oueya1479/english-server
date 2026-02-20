@@ -15,4 +15,6 @@ export const envValidationSchema = Joi.object({
   FIREBASE_CREDENTIALS: Joi.string().optional(),
 
   REDIS_URL: Joi.string().optional(),
+
+  ADMIN_API_KEY: Joi.string().optional(),
 });
